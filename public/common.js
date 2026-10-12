@@ -42,3 +42,21 @@ M.listen=(onText,onEnd)=>{const SR=window.SpeechRecognition||window.webkitSpeech
   if(!SR){alert("Voice input needs Chrome or Edge.");return null}
   const r=new SR();r.lang=M.info()[2];r.interimResults=false;
   r.onresult=e=>onText(e.results[0][0].transcript);r.onend=onEnd;r.onerror=onEnd;r.start();return r};
+// EDIT HERE: extra labels -> [Precautions, Consult a doctor if]. Same language codes as T.
+const T2={
+en:["Precautions","Consult a doctor if"],
+hi:["सावधानियां","इन स्थितियों में डॉक्टर से मिलें"],
+te:["జాగ్రత్తలు","ఈ సందర్భాల్లో వైద్యుడిని కలవండి"],
+ta:["முன்னெச்சரிக்கைகள்","இவ்வாறு இருந்தால் மருத்துவரை அணுகவும்"],
+kn:["ಮುನ್ನೆಚ್ಚರಿಕೆಗಳು","ಹೀಗಿದ್ದರೆ ವೈದ್ಯರನ್ನು ಭೇಟಿ ಮಾಡಿ"],
+ml:["മുൻകരുതലുകൾ","ഇങ്ങനെയെങ്കിൽ ഡോക്ടറെ കാണുക"],
+bn:["সতর্কতা","এমন হলে ডাক্তার দেখান"],
+mr:["खबरदारी","अशा वेळी डॉक्टरांना भेटा"],
+gu:["સાવચેતીઓ","આવું થાય તો ડૉક્ટરને મળો"],
+pa:["ਸਾਵਧਾਨੀਆਂ","ਅਜਿਹਾ ਹੋਵੇ ਤਾਂ ਡਾਕਟਰ ਨੂੰ ਮਿਲੋ"],
+ur:["احتیاطیں","ایسی صورت میں ڈاکٹر سے ملیں"],
+es:["Precauciones","Consulta a un médico si"],
+fr:["Précautions","Consultez un médecin si"],
+ar:["احتياطات","استشر الطبيب إذا"],
+zh:["注意事项","出现以下情况请就医"]};
+M.t2=i=>(T2[M.lang]||T2.en)[i];
