@@ -3,35 +3,113 @@
 <link rel="stylesheet" href="style.css"><link rel="stylesheet" href="extra.css"></head><body>
 <div id="hdr"></div>
 <div class="page"><div class="columns">
-<section class="panel chat"><div id="messages" class="messages" aria-live="polite"></div>
-<div class="composer"><textarea id="symptomInput" rows="2" maxlength="1000"></textarea>
-<div class="composefoot"><div><button id="micBtn" class="ibtn" title="Voice input">🎤</button> <button id="sendBtn" class="ibtn"></button></div></div></div>
-<div class="tools"><label>🔊 <select id="voiceSel"></select></label><label>Speed <input id="rate" type="range" min="0.6" max="1.4" step="0.1" value="1"></label><label><input id="auto" type="checkbox" checked> Auto-read</label></div></section>
-<aside class="side"><section class="panel summary"><div class="summaryhead"><span>✧</span><h3>Guidance</h3></div>
-<div id="resultContent" class="result hidden"><span id="rCat" class="pill"></span><h5 id="rDocL"></h5><h4 id="rDoc"></h4><p id="rMsg"></p><h5 id="rStepL"></h5><ul id="rSteps"></ul><button id="listenBtn" class="ibtn"></button><small id="rDisc" class="disclaimer"></small></div></section>
-<div class="safety"><span>♡</span><div><p>Not a diagnosis. If symptoms are severe or worsening, seek urgent medical care.</p></div></div></aside>
+<section class="panel chat">
+  <div class="langbar">
+    <label><span id="inL"></span><select id="inSel"></select></label>
+    <button id="swapBtn" class="ibtn" title="Swap">⇄</button>
+    <label><span id="outL"></span><select id="outSel"></select></label>
+    <button id="spkBtn" class="ibtn" title="Read / stop">🔊</button>
+  </div>
+  <div id="messages" class="messages" aria-live="polite"></div>
+  <div id="caption" class="caption hidden"></div>
+  <div class="composer"><textarea id="symptomInput" rows="2" maxlength="1000"></textarea>
+    <div class="composefoot"><div><button id="micBtn" class="ibtn" title="Voice input">🎤</button> <button id="sendBtn" class="ibtn"></button></div></div>
+    <div class="quick" id="quick"></div></div>
+  <div class="tools"><label>🔊 <select id="voiceSel"></select></label><label>Speed <input id="rate" type="range" min="0.6" max="1.4" step="0.1" value="1"></label><label><input id="auto" type="checkbox"> Auto-read</label></div>
+</section>
+<aside class="side"><section class="panel summary"><div class="summaryhead"><span>☎</span><h3 id="helpT"></h3></div><div id="help" class="helplist"></div></section>
+<div class="safety"><span>♡</span><div><p id="safetyNote"></p></div></div></aside>
 </div></div>
-<script src="common.js"></script>
+<script src="common.js"></script><script src="doctors-data.js"></script>
 <script>
 const $=id=>document.getElementById(id);let last="";
-$("symptomInput").placeholder=M.t(4);$("sendBtn").textContent=M.t(5)+" ↗";$("listenBtn").textContent="🔊 "+M.t(8);
-$("rDocL").textContent=M.t(6).toUpperCase();$("rStepL").textContent=M.t(7).toUpperCase();
-function add(text,role){const w=document.createElement("div");w.className="message "+role;const b=document.createElement("div");b.className="bubble";const p=document.createElement("p");p.textContent=text;b.appendChild(p);w.appendChild(b);$("messages").appendChild(w);$("messages").scrollTop=1e9}
-add(M.t(4).replace("...","?"),"assistant");
+// EDIT HERE: quick symptom buttons under the text box
+const QUICK=["Body pain","Fever","Headache","Cough","Stomach pain","Tooth pain","Weakness","Sore throat"];
+
+function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e}
+
+// ---------- language bar ----------
+$("inSel").innerHTML=`<option value="auto">${M.t2(4)}</option>`+LANGS.map(l=>`<option value="${l[0]}">${l[1]}</option>`).join("");
+$("outSel").innerHTML=LANGS.map(l=>`<option value="${l[0]}">${l[1]}</option>`).join("");
+$("inL").textContent=M.t2(2);$("outL").textContent=M.t2(3);$("helpT").textContent=M.t2(8);$("safetyNote").textContent=M.t(10);
+function syncLang(){
+  $("inSel").value=M.inLang;$("outSel").value=M.outLang;
+  const pl=(T[M.inLang==="auto"?M.lang:M.inLang]||T.en);
+  $("symptomInput").placeholder=pl[4];$("sendBtn").textContent=M.t(5)+" ↗";
+  $("symptomInput").dir=RTL.includes(M.inLang)?"rtl":"ltr";
+  fillVoices();
+}
+$("inSel").onchange=e=>{M.setIn(e.target.value);syncLang()};
+$("outSel").onchange=e=>{M.setOut(e.target.value);syncLang()};
+$("swapBtn").onclick=()=>{const i=M.inLang==="auto"?M.outLang:M.inLang,o=M.outLang;M.setIn(o);M.setOut(i);syncLang()};
+
+// ---------- voices / settings ----------
 function fillVoices(){const v=M.voices();$("voiceSel").innerHTML=v.length?v.map(x=>`<option value="${x.name}" ${x.name===localStorage.voice?"selected":""}>${x.name} (${x.lang})</option>`).join(""):"<option>Default voice</option>"}
-fillVoices();speechSynthesis.onvoiceschanged=fillVoices;
-$("voiceSel").onchange=e=>localStorage.voice=e.target.value;$("rate").value=localStorage.rate||1;$("rate").oninput=e=>localStorage.rate=e.target.value;
+if("speechSynthesis" in window)speechSynthesis.onvoiceschanged=fillVoices;
+$("voiceSel").onchange=e=>localStorage.voice=e.target.value;
+$("rate").value=localStorage.rate||1;$("rate").oninput=e=>localStorage.rate=e.target.value;
+$("auto").checked=localStorage.auto!=="0";$("auto").onchange=e=>localStorage.auto=e.target.checked?"1":"0";
+renderHelplines($("help"));
+
+// ---------- live captions while speaking ----------
+let capTok=0;
+function hideCaption(){$("caption").classList.add("hidden")}
+function speakWithCaption(text){
+  const cap=$("caption"),tok=++capTok;cap.innerHTML="";cap.classList.remove("hidden");
+  const spans=[],re=/\S+/g;let m;
+  while((m=re.exec(text))){const s=el("span",null,m[0]+" ");s.dataset.s=m.index;s.dataset.e=m.index+m[0].length;cap.appendChild(s);spans.push(s)}
+  let cur=-1;
+  M.speak(text,{
+    onBoundary:ci=>{if(tok!==capTok)return;const i=spans.findIndex(s=>ci>=+s.dataset.s&&ci<+s.dataset.e);if(i<0)return;
+      if(cur>=0)spans[cur].classList.remove("now");spans[i].classList.add("now");cur=i;cap.scrollTop=spans[i].offsetTop-cap.clientHeight/2},
+    onEnd:()=>{if(tok!==capTok)return;setTimeout(()=>{if(tok===capTok)hideCaption()},1500)}
+  });
+}
+$("spkBtn").onclick=()=>{if("speechSynthesis" in window&&speechSynthesis.speaking){capTok++;M.stop();hideCaption()}else if(last)speakWithCaption(last)};
+
+// ---------- chat ----------
+function add(text,role){const w=el("div","message "+role),b=el("div","bubble");b.appendChild(el("p",null,text));w.appendChild(b);$("messages").appendChild(w);$("messages").scrollTop=1e9;return w}
+function section(title,items,cls){if(!items||!items.length)return null;const s=el("div","csec "+(cls||""));s.appendChild(el("h5",null,title.toUpperCase()));const ul=el("ul");items.forEach(i=>ul.appendChild(el("li",null,i)));s.appendChild(ul);return s}
+function speechText(d){return [d.urgent?M.to(9):"",d.category,M.to(6)+": "+d.specialist,d.message,M.to(7)+": "+d.steps.join(". "),M.to2(0)+": "+(d.precautions||[]).join(". "),M.to2(1)+": "+(d.seeDoctor||[]).join(". ")].filter(Boolean).join(". ")}
+
+function addCard(d,inputText){
+  const w=el("div","message assistant"),b=el("div","bubble card"+(d.urgent?" urgentbubble":""));
+  b.appendChild(el("div","chead","🩺 MEDLINGO"));
+  if(d.urgent)b.appendChild(el("div","alert","🚨 "+M.to(9)));
+  if(d.translation&&M.inLang!==M.outLang){
+    const t=el("div","trans"),a=el("div","tbox"),c=el("div","tbox");
+    a.append(el("small",null,M.inLang==="auto"?M.t2(4):M.infoOf(M.inLang)[1]),el("strong",null,inputText));
+    c.append(el("small",null,M.infoOf(M.outLang)[1]),el("strong",null,d.translation));
+    t.append(a,el("span","tarrow","→"),c);b.appendChild(t);
+  }
+  b.appendChild(el("h4","ctitle",d.category));
+  b.appendChild(el("p","cmsg",d.message));
+  const doc=el("div","docbox");doc.append(el("small",null,M.to(6)),el("strong",null,"👨‍⚕️ "+d.specialist));b.appendChild(doc);
+  [section(M.to(7),d.steps),section(M.to2(0),d.precautions),section(M.to2(1),d.seeDoctor,"see")].forEach(s=>s&&b.appendChild(s));
+  const docs=doctorsFor(d.specialtyKey);
+  if(docs.length){const s=el("div","csec");s.appendChild(el("h5",null,M.to2(7).toUpperCase()));docs.forEach(x=>s.appendChild(doctorEl(x,M.to2)));b.appendChild(s)}
+  const lb=el("button","ibtn","🔊 "+M.to(8));const text=speechText(d);lb.onclick=()=>{last=text;speakWithCaption(text)};b.appendChild(lb);
+  b.appendChild(el("small","disclaimer",M.to(10)));
+  w.appendChild(b);$("messages").appendChild(w);$("messages").scrollTop=1e9;
+  return text;
+}
+
+async function send(text){
+  const symptom=(text||$("symptomInput").value).trim();if(!symptom)return;
+  add(symptom,"user");$("symptomInput").value="";$("sendBtn").disabled=true;const wait=add("…","assistant");
+  try{
+    const r=await fetch("/api/symptoms",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({symptom,inName:M.nameOf(M.inLang),outName:M.nameOf(M.outLang)})});
+    const d=await r.json();if(!r.ok)throw new Error(d.error);
+    wait.remove();last=addCard(d,symptom);
+    if($("auto").checked)speakWithCaption(last);
+  }catch(e){wait.remove();add("Server error. Please try again.","assistant")}finally{$("sendBtn").disabled=false}
+}
+$("sendBtn").onclick=()=>send();
+$("symptomInput").onkeydown=e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}};
+QUICK.forEach(q=>{const b=el("button",null,q);b.onclick=()=>send(q);$("quick").appendChild(b)});
 let rec=null;$("micBtn").onclick=()=>{if(rec){rec.stop();return}$("micBtn").classList.add("on");
   rec=M.listen(t=>{$("symptomInput").value=t;send()},()=>{rec=null;$("micBtn").classList.remove("on")})};
-async function send(){const symptom=$("symptomInput").value.trim();if(!symptom)return;add(symptom,"user");$("symptomInput").value="";$("sendBtn").disabled=true;
- try{const r=await fetch("/api/symptoms",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({symptom,langName:M.info()[1]+" ("+M.lang+")"})});
-  const d=await r.json();if(!r.ok)throw new Error(d.error);
-  $("resultContent").classList.remove("hidden");$("rCat").textContent=d.category;$("rDoc").textContent=d.specialist;$("rMsg").textContent=d.message;$("rDisc").textContent=d.disclaimer;
-  $("rSteps").innerHTML="";d.steps.forEach(s=>{const li=document.createElement("li");li.textContent=s;$("rSteps").appendChild(li)});
-  document.querySelector(".summary").classList.toggle("urgent",!!d.urgent);
-  last=`${d.category}. ${M.t(6)}: ${d.specialist}. ${d.message} ${M.t(7)}: ${d.steps.join(". ")}`;
-  add(`${d.category} — ${d.specialist}`,"assistant");if($("auto").checked)M.speak(last);
- }catch(e){add("Server error. Please try again.","assistant")}finally{$("sendBtn").disabled=false}}
-$("sendBtn").onclick=send;$("listenBtn").onclick=()=>last&&M.speak(last);
-$("symptomInput").onkeydown=e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}};
+
+syncLang();
+add((T[M.inLang==="auto"?M.lang:M.inLang]||T.en)[4].replace(/\.{3}|…/,"?"),"assistant");
 </script></body></html>
