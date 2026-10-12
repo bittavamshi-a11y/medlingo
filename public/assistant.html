@@ -1,0 +1,37 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MEDLINGO — Assistant</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css"><link rel="stylesheet" href="extra.css"></head><body>
+<div id="hdr"></div>
+<div class="page"><div class="columns">
+<section class="panel chat"><div id="messages" class="messages" aria-live="polite"></div>
+<div class="composer"><textarea id="symptomInput" rows="2" maxlength="1000"></textarea>
+<div class="composefoot"><div><button id="micBtn" class="ibtn" title="Voice input">🎤</button> <button id="sendBtn" class="ibtn"></button></div></div></div>
+<div class="tools"><label>🔊 <select id="voiceSel"></select></label><label>Speed <input id="rate" type="range" min="0.6" max="1.4" step="0.1" value="1"></label><label><input id="auto" type="checkbox" checked> Auto-read</label></div></section>
+<aside class="side"><section class="panel summary"><div class="summaryhead"><span>✧</span><h3>Guidance</h3></div>
+<div id="resultContent" class="result hidden"><span id="rCat" class="pill"></span><h5 id="rDocL"></h5><h4 id="rDoc"></h4><p id="rMsg"></p><h5 id="rStepL"></h5><ul id="rSteps"></ul><button id="listenBtn" class="ibtn"></button><small id="rDisc" class="disclaimer"></small></div></section>
+<div class="safety"><span>♡</span><div><p>Not a diagnosis. If symptoms are severe or worsening, seek urgent medical care.</p></div></div></aside>
+</div></div>
+<script src="common.js"></script>
+<script>
+const $=id=>document.getElementById(id);let last="";
+$("symptomInput").placeholder=M.t(4);$("sendBtn").textContent=M.t(5)+" ↗";$("listenBtn").textContent="🔊 "+M.t(8);
+$("rDocL").textContent=M.t(6).toUpperCase();$("rStepL").textContent=M.t(7).toUpperCase();
+function add(text,role){const w=document.createElement("div");w.className="message "+role;const b=document.createElement("div");b.className="bubble";const p=document.createElement("p");p.textContent=text;b.appendChild(p);w.appendChild(b);$("messages").appendChild(w);$("messages").scrollTop=1e9}
+add(M.t(4).replace("...","?"),"assistant");
+function fillVoices(){const v=M.voices();$("voiceSel").innerHTML=v.length?v.map(x=>`<option value="${x.name}" ${x.name===localStorage.voice?"selected":""}>${x.name} (${x.lang})</option>`).join(""):"<option>Default voice</option>"}
+fillVoices();speechSynthesis.onvoiceschanged=fillVoices;
+$("voiceSel").onchange=e=>localStorage.voice=e.target.value;$("rate").value=localStorage.rate||1;$("rate").oninput=e=>localStorage.rate=e.target.value;
+let rec=null;$("micBtn").onclick=()=>{if(rec){rec.stop();return}$("micBtn").classList.add("on");
+  rec=M.listen(t=>{$("symptomInput").value=t;send()},()=>{rec=null;$("micBtn").classList.remove("on")})};
+async function send(){const symptom=$("symptomInput").value.trim();if(!symptom)return;add(symptom,"user");$("symptomInput").value="";$("sendBtn").disabled=true;
+ try{const r=await fetch("/api/symptoms",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({symptom,langName:M.info()[1]+" ("+M.lang+")"})});
+  const d=await r.json();if(!r.ok)throw new Error(d.error);
+  $("resultContent").classList.remove("hidden");$("rCat").textContent=d.category;$("rDoc").textContent=d.specialist;$("rMsg").textContent=d.message;$("rDisc").textContent=d.disclaimer;
+  $("rSteps").innerHTML="";d.steps.forEach(s=>{const li=document.createElement("li");li.textContent=s;$("rSteps").appendChild(li)});
+  document.querySelector(".summary").classList.toggle("urgent",!!d.urgent);
+  last=`${d.category}. ${M.t(6)}: ${d.specialist}. ${d.message} ${M.t(7)}: ${d.steps.join(". ")}`;
+  add(`${d.category} — ${d.specialist}`,"assistant");if($("auto").checked)M.speak(last);
+ }catch(e){add("Server error. Please try again.","assistant")}finally{$("sendBtn").disabled=false}}
+$("sendBtn").onclick=send;$("listenBtn").onclick=()=>last&&M.speak(last);
+$("symptomInput").onkeydown=e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}};
+</script></body></html>

@@ -1,0 +1,12 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MEDLINGO — Doctors</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css"><link rel="stylesheet" href="extra.css"></head><body>
+<div id="hdr"></div><div class="page"><h1>Which doctor should I see?</h1><p class="lede">Search a symptom or body area.</p>
+<input type="text" id="q" placeholder="fever, tooth, skin, knee..." style="width:min(420px,100%);margin:14px 0 24px"><div class="caregrid" id="grid" style="grid-template-columns:repeat(auto-fill,minmax(250px,1fr))"></div></div>
+<script src="common.js"></script>
+<script>
+const D=[["General Physician","Fever, cold, fatigue, body ache, first check-up"],["Dentist","Tooth pain, gum bleeding, mouth ulcers"],["Cardiologist","Chest pain, palpitations, high blood pressure"],["Pulmonologist","Persistent cough, wheezing, breathing difficulty"],["ENT Specialist","Sore throat, ear pain, sinus, hearing"],["Neurologist","Migraine, dizziness, numbness, seizures"],["Dermatologist","Rash, acne, itching, hair and skin problems"],["Gastroenterologist","Stomach pain, acidity, vomiting, diarrhoea"],["Orthopedic Doctor","Knee, joint, back pain, fractures"],["Ophthalmologist","Eye pain, blurry vision, redness"],["Gynecologist","Periods, pregnancy, women's health"],["Pediatrician","Health problems in babies and children"],["Psychiatrist","Anxiety, depression, sleep problems, panic"],["Endocrinologist","Diabetes, thyroid, hormone issues"]];
+const g=document.getElementById("grid"),q=document.getElementById("q");
+function draw(){const s=q.value.toLowerCase();g.innerHTML=D.filter(d=>(d[0]+d[1]).toLowerCase().includes(s)).map(d=>`<article><span class="careicon teal">✚</span><h3>${d[0]}</h3><p>${d[1]}</p></article>`).join("")}
+q.oninput=draw;draw();
+</script></body></html>

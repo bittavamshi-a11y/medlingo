@@ -1,12 +1,9 @@
 {
   "name": "medlingo-premium",
-  "version": "1.0.0",
-  "description": "MEDLINGO premium-style frontend and Express backend demo",
+  "version": "2.0.0",
+  "description": "MEDLINGO multilingual voice health guide",
   "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
-  },
-  "dependencies": {
-    "express": "^4.21.2"
-  }
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" },
+  "dependencies": { "express": "^4.21.2" }
 }
