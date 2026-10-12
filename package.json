@@ -1,0 +1,12 @@
+{
+  "name": "medlingo-premium",
+  "version": "1.0.0",
+  "description": "MEDLINGO premium-style frontend and Express backend demo",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}
