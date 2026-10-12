@@ -2,8 +2,12 @@ const express = require("express");
 const path = require("path");
 const app = express();
 const PORT = process.env.PORT || 3000;
-const KEY = process.env.ANTHROPIC_API_KEY;                    // set in Render > Environment (never hard-code)
-const MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-5-5"; // EDIT HERE: default model if CLAUDE_MODEL is not set
+
+// Keys come from Render > Environment (never hard-code them)
+const GROQ_KEY = process.env.GROQ_API_KEY;
+const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile"; // EDIT HERE: check console.groq.com/docs/models for current names
+const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-5-5";    // EDIT HERE: default Anthropic model
 
 app.use(express.json({ limit: "20kb" }));
 app.use(express.static(path.join(__dirname, "public")));
@@ -67,38 +71,61 @@ function ruleAnswer(s) {
     message: "Consider discussing your symptoms with a qualified healthcare professional." };
 }
 
+// EDIT HERE: system prompt used by every AI provider
+const sysPrompt = (langName) =>
+  `You are MEDLINGO, an educational health guide (not a doctor). Reply ONLY with JSON: {"category":"","specialist":"which type of consultant doctor to see","message":"2 short sentences","steps":["3-5 safe self-care steps"],"precautions":["2-4 things to avoid or be careful about"],"seeDoctor":["2-4 specific warning signs for this symptom that mean the person should consult a doctor"],"urgent":false}. Write every value in ${langName}. Set urgent true and advise emergency care (112) for red-flag symptoms such as chest pain, breathing trouble, stroke signs, seizure or heavy bleeding. Be specific to the user's symptom. Never diagnose and never give medicine doses.`;
+
 const list = (a, n) => Array.isArray(a) ? a.map(String).filter(Boolean).slice(0, n) : [];
 
-// Calls the Anthropic Messages API. Throws on any problem so the caller can fall back to rules.
-async function askAI(symptom, langName, fallback) {
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    signal: AbortSignal.timeout(20000),
-    headers: { "content-type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({
-      model: MODEL, max_tokens: 1000,
-      // EDIT HERE: system prompt
-      system: `You are MEDLINGO, an educational health guide (not a doctor). Reply ONLY with JSON: {"category":"","specialist":"which type of consultant doctor to see","message":"2 short sentences","steps":["3-5 safe self-care steps"],"precautions":["2-4 things to avoid or be careful about"],"seeDoctor":["2-4 specific warning signs for this symptom that mean the person should consult a doctor"],"urgent":false}. Write every value in ${langName}. Set urgent true and advise emergency care (112) for red-flag symptoms. Never diagnose and never give medicine doses.`,
-      messages: [{ role: "user", content: symptom }]
-    })
-  });
-  if (!r.ok) throw new Error("API status " + r.status);
-  const d = await r.json();
-  const txt = d.content?.[0]?.text || "";
-  const j = JSON.parse(txt.replace(/```json|```/g, "").trim());
+// Turns the model's text into a safe, validated object (throws if unusable)
+function parseAI(txt, fallback) {
+  const m = String(txt).replace(/```json|```/g, "").trim();
+  const j = JSON.parse(m.slice(m.indexOf("{"), m.lastIndexOf("}") + 1));
   const steps = list(j.steps, 5);
   if (!j.category || !j.specialist || !steps.length) throw new Error("Incomplete AI reply");
   const precautions = list(j.precautions, 4), seeDoctor = list(j.seeDoctor, 4);
   return {
     category: String(j.category).slice(0, 100), specialist: String(j.specialist).slice(0, 150),
     message: String(j.message || "").slice(0, 400), steps, urgent: !!j.urgent,
-    // if the AI forgot these, use the rule text so the sections are never empty
     precautions: precautions.length ? precautions : fallback.precautions,
     seeDoctor: seeDoctor.length ? seeDoctor : fallback.seeDoctor
   };
 }
 
-app.get("/api/health", (_q, res) => res.json({ status: "ok", app: "MEDLINGO", ai: !!KEY }));
+// Provider 1: Groq (OpenAI-compatible API)
+async function askGroq(symptom, langName, fallback) {
+  const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    signal: AbortSignal.timeout(20000),
+    headers: { "content-type": "application/json", authorization: "Bearer " + GROQ_KEY },
+    body: JSON.stringify({
+      model: GROQ_MODEL, temperature: 0.3, max_tokens: 1000,
+      response_format: { type: "json_object" },
+      messages: [{ role: "system", content: sysPrompt(langName) }, { role: "user", content: symptom }]
+    })
+  });
+  if (!r.ok) throw new Error("Groq status " + r.status);
+  const d = await r.json();
+  return parseAI(d.choices?.[0]?.message?.content || "", fallback);
+}
+
+// Provider 2: Anthropic
+async function askAnthropic(symptom, langName, fallback) {
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    signal: AbortSignal.timeout(20000),
+    headers: { "content-type": "application/json", "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({ model: CLAUDE_MODEL, max_tokens: 1000, system: sysPrompt(langName), messages: [{ role: "user", content: symptom }] })
+  });
+  if (!r.ok) throw new Error("Anthropic status " + r.status);
+  const d = await r.json();
+  return parseAI(d.content?.[0]?.text || "", fallback);
+}
+
+app.get("/api/health", (_q, res) => res.json({
+  status: "ok", app: "MEDLINGO", ai: !!(GROQ_KEY || ANTHROPIC_KEY),
+  providers: { groq: !!GROQ_KEY, anthropic: !!ANTHROPIC_KEY }
+}));
 
 app.post("/api/symptoms", async (req, res) => {
   const raw = String(req.body?.symptom || "").trim();
@@ -107,12 +134,16 @@ app.post("/api/symptoms", async (req, res) => {
   if (raw.length > 1000) return res.status(413).json({ error: "Keep your message under 1000 characters." });
   const rule = ruleAnswer(raw.toLowerCase());
   let out = rule, source = "rules";
-  if (KEY) {
-    try { const ai = await askAI(raw, langName, rule); out = { ...ai, urgent: ai.urgent || rule.urgent }; source = "ai"; }
-    catch (e) { console.error("AI failed, using rules:", e.message); }
+  // EDIT HERE: provider order. Each one is tried only if its key exists.
+  const providers = [];
+  if (GROQ_KEY) providers.push(["groq", askGroq]);
+  if (ANTHROPIC_KEY) providers.push(["anthropic", askAnthropic]);
+  for (const [name, fn] of providers) {
+    try { const ai = await fn(raw, langName, rule); out = { ...ai, urgent: ai.urgent || rule.urgent }; source = name; break; }
+    catch (e) { console.error(name + " failed:", e.message); }
   }
   res.json({ ...out, source, disclaimer: DISC });
 });
 
 app.use((err, _q, res, _n) => { console.error(err); res.status(500).json({ error: "Unexpected server error." }); });
-app.listen(PORT, () => console.log(`MEDLINGO running on port ${PORT} (AI ${KEY ? "on" : "off"})`));
+app.listen(PORT, () => console.log(`MEDLINGO running on port ${PORT} (Groq ${GROQ_KEY ? "on" : "off"}, Anthropic ${ANTHROPIC_KEY ? "on" : "off"})`));
