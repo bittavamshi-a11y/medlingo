@@ -160,7 +160,7 @@ function cleanLanguageName(value) {
   // The browser may send a native-language label, an English name, or "Label (code)".
   const name = String(value || "English").replace(/\s*\([^)]*\)\s*$/, "").trim();
   const aliases = {
-    English: "English",
+    English: "English", en: "English", hi: "Hindi", te: "Telugu", ta: "Tamil", kn: "Kannada", ml: "Malayalam", bn: "Bengali", mr: "Marathi", gu: "Gujarati", pa: "Punjabi", ur: "Urdu", es: "Spanish", fr: "French", ar: "Arabic", zh: "Chinese", "zh-CN": "Chinese",
     हिन्दी: "Hindi", हिंदी: "Hindi", Hindi: "Hindi",
     తెలుగు: "Telugu", Telugu: "Telugu",
     தமிழ்: "Tamil", Tamil: "Tamil",
