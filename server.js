@@ -179,6 +179,39 @@ function cleanLanguageName(value) {
   return aliases[name] || name || "English";
 }
 
+// Fallback translator for every supported language. This uses Google's web translation
+// endpoint as a best-effort backup when the configured AI provider errors or returns bad JSON.
+const TRANSLATE_CODES = {
+  English: "en", Hindi: "hi", Telugu: "te", Tamil: "ta", Kannada: "kn",
+  Malayalam: "ml", Bengali: "bn", Marathi: "mr", Gujarati: "gu", Punjabi: "pa",
+  Urdu: "ur", Spanish: "es", French: "fr", Arabic: "ar", Chinese: "zh-CN"
+};
+
+async function translateWithGoogle(texts, language) {
+  const targetCode = TRANSLATE_CODES[language];
+  if (!targetCode) return null;
+  const results = await Promise.all(texts.map(async text => {
+    const url = new URL("https://translate.googleapis.com/translate_a/single");
+    url.searchParams.set("client", "gtx");
+    url.searchParams.set("sl", "auto");
+    url.searchParams.set("tl", targetCode);
+    url.searchParams.set("dt", "t");
+    url.searchParams.set("q", String(text));
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(12000),
+      headers: { "user-agent": "Mozilla/5.0 MEDLINGO translation fallback" }
+    });
+    if (!response.ok) throw new Error("Translation fallback status " + response.status);
+    const data = await response.json();
+    const translated = Array.isArray(data?.[0])
+      ? data[0].map(part => Array.isArray(part) ? part[0] || "" : "").join("")
+      : "";
+    if (!translated.trim()) throw new Error("Translation fallback returned empty text");
+    return translated.trim();
+  }));
+  return results;
+}
+
 async function translateBatch(texts, target) {
   const language = cleanLanguageName(target);
   if (!Array.isArray(texts) || !texts.length) return [];
@@ -252,7 +285,20 @@ async function translateBatch(texts, target) {
       }
     }
 
-    if (!translated) return null;
+    // Do not accept a provider response that simply repeats all source strings.
+    if (translated && translated.every((value, i) => value.trim() === chunk[i].trim())) {
+      translated = null;
+    }
+    if (!translated) {
+      try {
+        translated = await translateWithGoogle(chunk, language);
+        console.log("Translation fallback succeeded for", language);
+      } catch (e) {
+        console.error("Translation fallback failed for", language + ":", e.message);
+        return null;
+      }
+    }
+    if (!translated || translated.length !== chunk.length) return null;
     output.push(...translated);
   }
   return output;
