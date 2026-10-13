@@ -84,37 +84,34 @@ M.listen=(onText,onEnd)=>{const SR=window.SpeechRecognition||window.webkitSpeech
   r.onresult=e=>onText(e.results[0][0].transcript);r.onend=onEnd;r.onerror=onEnd;r.start();return r};
 
 
-// Translate static page copy into the selected site language. Header controls already use
-// the built-in dictionaries above. Text is cached per language to avoid repeated API calls.
-(async function translatePageCopy(){
-  if(M.lang==="en" || !document.body) return;
-  const excluded="script,style,noscript,textarea,input,select,option,svg,#hdr,[contenteditable=true]";
-  const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT,{
-    acceptNode(node){
-      const p=node.parentElement;
-      if(!p || p.closest(excluded) || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
-      if(node.nodeValue.trim().length<2) return NodeFilter.FILTER_REJECT;
-      return NodeFilter.FILTER_ACCEPT;
-    }
-  });
-  const nodes=[];while(walker.nextNode())nodes.push(walker.currentNode);
-  const unique=[...new Set(nodes.map(n=>n.nodeValue.trim()))].slice(0,120);
-  if(!unique.length)return;
-  const cacheKey="medlingo-page-copy-v1-"+M.lang;
-  let translated={};
-  try{translated=JSON.parse(localStorage.getItem(cacheKey)||"{}")}catch{}
-  const missing=unique.filter(s=>!translated[s]);
-  if(missing.length){
-    try{
-      const response=await fetch("/api/translate",{method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({texts:missing,target:M.infoOf(M.lang)[1]})});
-      if(!response.ok)return;
-      const data=await response.json();
-      if(data.translations && Array.isArray(data.translations)){
-        missing.forEach((s,i)=>{if(data.translations[i])translated[s]=data.translations[i]});
-        try{localStorage.setItem(cacheKey,JSON.stringify(translated))}catch{}
-      }
-    }catch(err){console.warn("Page translation unavailable:",err)}
-  }
-  nodes.forEach(n=>{const original=n.nodeValue.trim();if(translated[original])n.nodeValue=n.nodeValue.replace(original,translated[original])});
+// Translate page text, including content inserted after initial page load.
+(function translatePageCopy(){
+ if(M.lang==="en"||!document.body)return;
+ const excluded="script,style,noscript,textarea,input,select,option,svg,#hdr,[contenteditable=true],.user,.disclaimer";
+ const seen=new WeakSet();let queued=new Set(),timer=null,busy=false;
+ const key="medlingo-page-copy-v2-"+M.lang;let cache={};try{cache=JSON.parse(localStorage.getItem(key)||"{}")}catch{}
+ function queueNode(n){
+  if(!n||seen.has(n)||!n.parentElement||n.parentElement.closest(excluded)||!n.nodeValue.trim()||n.nodeValue.trim().length<2)return;
+  seen.add(n);const s=n.nodeValue.trim();
+  if(cache[s]){n.nodeValue=n.nodeValue.replace(s,cache[s]);return}
+  queued.add(n);if(timer)clearTimeout(timer);timer=setTimeout(flush,300);
+ }
+ async function flush(){
+  if(busy||!queued.size)return;busy=true;const batch=[...queued].filter(n=>n.isConnected);queued.clear();
+  const texts=[...new Set(batch.map(n=>n.nodeValue.trim()))].slice(0,100),missing=texts.filter(s=>!cache[s]);
+  if(missing.length)try{
+   const r=await fetch("/api/translate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({texts:missing,target:M.infoOf(M.lang)[1]})});
+   if(r.ok){const d=await r.json();if(Array.isArray(d.translations))missing.forEach((s,i)=>{if(d.translations[i])cache[s]=d.translations[i]});try{localStorage.setItem(key,JSON.stringify(cache))}catch{}}
+  }catch(e){console.warn("Page translation unavailable",e)}
+  batch.forEach(n=>{if(!n.isConnected)return;const s=n.nodeValue.trim();if(cache[s])n.nodeValue=n.nodeValue.replace(s,cache[s])});
+  busy=false;if(queued.size)flush();
+ }
+ function scan(root){
+  if(root.nodeType===Node.TEXT_NODE){queueNode(root);return}
+  if(root.nodeType!==Node.ELEMENT_NODE||root.matches(excluded)||root.closest(excluded))return;
+  const w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);let n;while((n=w.nextNode()))queueNode(n);
+ }
+ scan(document.body);
+ new MutationObserver(records=>records.forEach(rec=>{rec.addedNodes.forEach(scan);if(rec.type==="characterData"&&!seen.has(rec.target))queueNode(rec.target)}))
+  .observe(document.body,{childList:true,subtree:true,characterData:true});
 })();
