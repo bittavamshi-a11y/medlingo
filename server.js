@@ -157,13 +157,24 @@ app.get("/api/health", (_q, res) => res.json({
 
 
 function cleanLanguageName(value) {
-  // The browser sends labels like "తెలుగు (te)"; model prompts need the language name only.
+  // The browser may send a native-language label, an English name, or "Label (code)".
   const name = String(value || "English").replace(/\s*\([^)]*\)\s*$/, "").trim();
   const aliases = {
-    हिन्दी: "Hindi", తెలుగు: "Telugu", தமிழ்: "Tamil", ಕನ್ನಡ: "Kannada",
-    മലയാളം: "Malayalam", বাংলা: "Bengali", मराठी: "Marathi", ગુજરાતી: "Gujarati",
-    ਪੰਜਾਬੀ: "Punjabi", اردو: "Urdu", Español: "Spanish", Français: "French",
-    العربية: "Arabic", 中文: "Chinese"
+    English: "English",
+    हिन्दी: "Hindi", हिंदी: "Hindi", Hindi: "Hindi",
+    తెలుగు: "Telugu", Telugu: "Telugu",
+    தமிழ்: "Tamil", Tamil: "Tamil",
+    ಕನ್ನಡ: "Kannada", Kannada: "Kannada",
+    മലയാളം: "Malayalam", Malayalam: "Malayalam",
+    বাংলা: "Bengali", Bengali: "Bengali",
+    मराठी: "Marathi", Marathi: "Marathi",
+    ગુજરાતી: "Gujarati", Gujarati: "Gujarati",
+    ਪੰਜਾਬੀ: "Punjabi", Punjabi: "Punjabi",
+    اردو: "Urdu", Urdu: "Urdu",
+    Español: "Spanish", Spanish: "Spanish",
+    Français: "French", French: "French",
+    العربية: "Arabic", Arabic: "Arabic",
+    中文: "Chinese", Chinese: "Chinese"
   };
   return aliases[name] || name || "English";
 }
