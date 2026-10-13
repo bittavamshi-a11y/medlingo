@@ -97,19 +97,24 @@ M.listen=(onText,onEnd)=>{const SR=window.SpeechRecognition||window.webkitSpeech
  function translateTarget(target){
    if(target.kind==="text"){
      if(!target.node.isConnected)return;
-     if(target.node.nodeValue!==target.original)return;
-     target.node.nodeValue=target.translated;
-     processed.set(target.node,target.translated);
+     // Keep the original raw text for stale-node checks; text nodes often contain indentation whitespace.
+     if(target.node.nodeValue!==target.raw)return;
+     const leading=(target.raw.match(/^\\s*/)||[""])[0];
+     const trailing=(target.raw.match(/\\s*$/)||[""])[0];
+     const translated=leading+target.translated+trailing;
+     target.node.nodeValue=translated;
+     processed.set(target.node,translated);
    } else {
-     if(!target.node.isConnected||target.node.getAttribute(target.attr)!==target.original)return;
+     if(!target.node.isConnected||target.node.getAttribute(target.attr)!==target.raw)return;
      target.node.setAttribute(target.attr,target.translated);
    }
  }
  function add(node,kind,attr,value){
-   const original=String(value||"").trim();
+   const raw=String(value||"");
+   const original=raw.trim();
    if(original.length<2||original.length>700)return;
    if(kind==="text"&&processed.get(node)===node.nodeValue)return;
-   const target={node,kind,attr,original,translated:""};
+   const target={node,kind,attr,original,raw,translated:""};
    if(cache[original]){target.translated=cache[original];translateTarget(target);return}
    queue.push(target);
    if(timer)clearTimeout(timer);
