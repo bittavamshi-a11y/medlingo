@@ -154,7 +154,7 @@ app.get("/api/health", (_q, res) => res.json({
 
 function cleanLanguageName(value) {
   // The browser sends labels like "తెలుగు (te)"; model prompts need the language name only.
-  const name = String(value || "English").replace(/\\s*\\([^)]*\\)\\s*$/, "").trim();
+  const name = String(value || "English").replace(/\s*\([^)]*\)\s*$/, "").trim();
   const aliases = {
     हिन्दी: "Hindi", తెలుగు: "Telugu", தமிழ்: "Tamil", ಕನ್ನಡ: "Kannada",
     മലയാളം: "Malayalam", বাংলা: "Bengali", मराठी: "Marathi", ગુજરાતી: "Gujarati",
