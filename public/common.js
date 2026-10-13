@@ -163,6 +163,8 @@ M.listen=(onText,onEnd)=>{const SR=window.SpeechRecognition||window.webkitSpeech
    busy=false;
    if(queue.length)flush();
  }
+ const titleNode=document.querySelector("title")?.firstChild;
+ if(titleNode)add(titleNode,"text",null,titleNode.nodeValue);
  scan(document.body);
  new MutationObserver(records=>records.forEach(rec=>{
    rec.addedNodes.forEach(scan);
@@ -170,5 +172,5 @@ M.listen=(onText,onEnd)=>{const SR=window.SpeechRecognition||window.webkitSpeech
    if(rec.type==="attributes"&&attrNames.includes(rec.attributeName)){
      const el=rec.target;if(!el.matches(excluded)&&!el.closest(excluded))add(el,"attr",rec.attributeName,el.getAttribute(rec.attributeName));
    }
- })).observe(document.body,{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:attrNames});
+ })).observe(document.body,{childList:true,subtree:true,characterData:true});
 })();
