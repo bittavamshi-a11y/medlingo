@@ -103,6 +103,7 @@ function fallbackSpeech(text,cb,token){
   u.onstart=()=>cb.onStart&&cb.onStart();u.onboundary=e=>cb.onBoundary&&cb.onBoundary(e.charIndex);
   u.onend=u.onerror=()=>cb.onEnd&&cb.onEnd();speechSynthesis.speak(u);
 }
+M.isSpeaking=()=>!!(medlingoAudio&&!medlingoAudio.paused)||!!("speechSynthesis" in window&&speechSynthesis.speaking);
 M.stop=()=>{medlingoSpeechToken++;if("speechSynthesis" in window)speechSynthesis.cancel();if(medlingoAudio){medlingoAudio.pause();medlingoAudio.src="";medlingoAudio=null}};
 
 // voice input: recognises in the INPUT language (UI language when input is "auto")
