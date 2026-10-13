@@ -195,6 +195,17 @@ async function translateBatch(texts, target) {
   return null;
 }
 
+// Safe diagnostic: confirms whether the configured provider can translate without exposing API keys.
+app.get("/api/translate-test", async (_req, res) => {
+  const translations = await translateBatch(["Hello. Please drink water and rest."], "Telugu");
+  res.json({
+    providerConfigured: !!GROQ_KEY,
+    translationSucceeded: Array.isArray(translations) && translations.length === 1,
+    translatedSample: Array.isArray(translations) ? translations[0] : null,
+    hint: Array.isArray(translations) ? "Translation provider responded." : "The provider request failed or returned an unexpected response. Check Render runtime logs."
+  });
+});
+
 app.post("/api/symptoms", async (req, res) => {
   const raw = String(req.body?.symptom || "").trim();
   const inName = String(req.body?.inName || "auto-detect").slice(0, 60);
