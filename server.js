@@ -169,6 +169,32 @@ app.get("/api/health", (_q, res) => res.json({
   providers: { groq: !!GROQ_KEY, anthropic: !!ANTHROPIC_KEY }
 }));
 
+
+async function translateBatch(texts, target) {
+  const prompt = `Translate every string in the JSON array into ${target}. Return ONLY valid JSON with a "translations" array of the same length and order. Preserve medical meaning and safety warnings. Input: ${JSON.stringify(texts)}`;
+  if (GROQ_KEY) {
+    try {
+      const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method:"POST", signal:AbortSignal.timeout(20000),
+        headers:{"content-type":"application/json",authorization:"Bearer "+GROQ_KEY},
+        body:JSON.stringify({model:GROQ_MODEL,temperature:0.1,max_tokens:3000,response_format:{type:"json_object"},messages:[{role:"system",content:"You are a precise medical-language translator. Return JSON only."},{role:"user",content:prompt}]})
+      });
+      if(r.ok){const d=await r.json(),raw=d.choices?.[0]?.message?.content||"{}";const j=JSON.parse(raw.slice(raw.indexOf("{"),raw.lastIndexOf("}")+1));if(Array.isArray(j.translations)&&j.translations.length===texts.length)return j.translations.map((v,i)=>String(v||texts[i]));}
+    } catch(e){console.error("Groq translation failed:",e.message)}
+  }
+  if (ANTHROPIC_KEY) {
+    try {
+      const r = await fetch("https://api.anthropic.com/v1/messages", {
+        method:"POST",signal:AbortSignal.timeout(20000),
+        headers:{"content-type":"application/json","x-api-key":ANTHROPIC_KEY,"anthropic-version":"2023-06-01"},
+        body:JSON.stringify({model:CLAUDE_MODEL,max_tokens:3000,system:"You are a precise medical-language translator. Return JSON only.",messages:[{role:"user",content:prompt}]})
+      });
+      if(r.ok){const d=await r.json(),raw=d.content?.[0]?.text||"{}";const j=JSON.parse(raw.slice(raw.indexOf("{"),raw.lastIndexOf("}")+1));if(Array.isArray(j.translations)&&j.translations.length===texts.length)return j.translations.map((v,i)=>String(v||texts[i]));}
+    } catch(e){console.error("Anthropic translation failed:",e.message)}
+  }
+  return null;
+}
+
 app.post("/api/symptoms", async (req, res) => {
   const raw = String(req.body?.symptom || "").trim();
   const inName = String(req.body?.inName || "auto-detect").slice(0, 60);
@@ -184,6 +210,19 @@ app.post("/api/symptoms", async (req, res) => {
   for (const [name, fn] of providers) {
     try { const ai = await fn(raw, inName, outName, rule); out = { ...ai, urgent: ai.urgent || rule.urgent }; source = name; break; }
     catch (e) { console.error(name + " failed:", e.message); }
+  }
+  // Rule-based fallback is English by default; translate every displayed field before returning it.
+  if (source === "rules" && !/^english/i.test(outName)) {
+    const fields = ["category","specialist","message","steps","precautions","seeDoctor"];
+    const values = fields.flatMap(k => Array.isArray(out[k]) ? out[k] : [out[k] || ""]);
+    const translated = await translateBatch(values, outName);
+    if (translated) {
+      let i = 0;
+      for (const k of fields) {
+        if (Array.isArray(out[k])) out[k] = translated.slice(i, i + out[k].length), i += out[k].length;
+        else out[k] = translated[i++];
+      }
+    }
   }
   res.json({ ...out, source, disclaimer: DISC });
 });
