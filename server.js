@@ -387,12 +387,13 @@ app.post("/api/symptoms", async (req, res) => {
     try { const ai = await fn(raw, inName, outName, rule); out = { ...ai, urgent: ai.urgent || rule.urgent }; source = name; break; }
     catch (e) { console.error(name + " failed:", e.message); }
   }
-  // Always translate the final response on the server for non-English output.
-  // Do this for AI replies too: prompts alone cannot guarantee the requested language.
-  if (!/^english/i.test(outName)) {
-    const fields = ["category","specialist","message","steps","precautions","seeDoctor","translation"];
+  // Translate detailed guidance into the requested language, but keep the symptom label
+  // separate so it remains a direct translation of exactly what the user entered.
+  const targetLanguage = cleanLanguageName(outName);
+  if (!/^english/i.test(targetLanguage)) {
+    const fields = ["category","specialist","message","steps","precautions","seeDoctor"];
     const values = fields.flatMap(k => Array.isArray(out[k]) ? out[k] : [out[k] || ""]);
-    const translated = await translateBatch(values, cleanLanguageName(outName));
+    const translated = await translateBatch(values, targetLanguage);
     if (translated) {
       let i = 0;
       for (const k of fields) {
@@ -404,7 +405,30 @@ app.post("/api/symptoms", async (req, res) => {
         }
       }
     } else {
-      console.error("Could not translate symptom response to", outName, "(check translation provider keys and logs)");
+      console.error("Could not translate symptom response to", outName, "(check Render translation provider keys and logs)");
+    }
+  }
+
+  // Translate the original input directly for the source/translation card.
+  // Example: "Fever" -> "बुखार" in Hindi or "జ్వరం" in Telugu.
+  try {
+    if (/^english/i.test(targetLanguage) && /^english/i.test(inName)) {
+      out.translation = raw;
+    } else {
+      const exactTranslation = await translateWithGoogle([raw], targetLanguage);
+      if (exactTranslation && exactTranslation[0]) out.translation = exactTranslation[0];
+      else {
+        const fallbackTranslation = await translateBatch([raw], targetLanguage);
+        out.translation = fallbackTranslation?.[0] || raw;
+      }
+    }
+  } catch (e) {
+    console.error("Exact symptom translation failed:", e.message);
+    try {
+      const fallbackTranslation = await translateBatch([raw], targetLanguage);
+      out.translation = fallbackTranslation?.[0] || raw;
+    } catch {
+      out.translation = raw;
     }
   }
   res.json({ ...out, source, disclaimer: DISC });
