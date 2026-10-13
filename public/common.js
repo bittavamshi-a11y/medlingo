@@ -82,3 +82,39 @@ M.listen=(onText,onEnd)=>{const SR=window.SpeechRecognition||window.webkitSpeech
   if(!SR){alert("Voice input needs Chrome or Edge.");return null}
   const r=new SR();r.lang=M.infoOf(M.inLang==="auto"?M.lang:M.inLang)[2];r.interimResults=false;
   r.onresult=e=>onText(e.results[0][0].transcript);r.onend=onEnd;r.onerror=onEnd;r.start();return r};
+
+
+// Translate static page copy into the selected site language. Header controls already use
+// the built-in dictionaries above. Text is cached per language to avoid repeated API calls.
+(async function translatePageCopy(){
+  if(M.lang==="en" || !document.body) return;
+  const excluded="script,style,noscript,textarea,input,select,option,svg,#hdr,[contenteditable=true]";
+  const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT,{
+    acceptNode(node){
+      const p=node.parentElement;
+      if(!p || p.closest(excluded) || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+      if(node.nodeValue.trim().length<2) return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    }
+  });
+  const nodes=[];while(walker.nextNode())nodes.push(walker.currentNode);
+  const unique=[...new Set(nodes.map(n=>n.nodeValue.trim()))].slice(0,120);
+  if(!unique.length)return;
+  const cacheKey="medlingo-page-copy-v1-"+M.lang;
+  let translated={};
+  try{translated=JSON.parse(localStorage.getItem(cacheKey)||"{}")}catch{}
+  const missing=unique.filter(s=>!translated[s]);
+  if(missing.length){
+    try{
+      const response=await fetch("/api/translate",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({texts:missing,target:M.infoOf(M.lang)[1]})});
+      if(!response.ok)return;
+      const data=await response.json();
+      if(data.translations && Array.isArray(data.translations)){
+        missing.forEach((s,i)=>{if(data.translations[i])translated[s]=data.translations[i]});
+        try{localStorage.setItem(cacheKey,JSON.stringify(translated))}catch{}
+      }
+    }catch(err){console.warn("Page translation unavailable:",err)}
+  }
+  nodes.forEach(n=>{const original=n.nodeValue.trim();if(translated[original])n.nodeValue=n.nodeValue.replace(original,translated[original])});
+})();
