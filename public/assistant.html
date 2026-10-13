@@ -65,7 +65,7 @@ function speakWithCaption(text){
     onEnd:()=>{if(tok!==capTok)return;setTimeout(()=>{if(tok===capTok)hideCaption()},1500)}
   });
 }
-$("spkBtn").onclick=()=>{if("speechSynthesis" in window&&speechSynthesis.speaking){capTok++;M.stop();hideCaption()}else if(last)speakWithCaption(last)};
+$("spkBtn").onclick=()=>{if(M.isSpeaking()){capTok++;M.stop();hideCaption()}else if(last)speakWithCaption(last)};
 
 // ---------- chat ----------
 function add(text,role){const w=el("div","message "+role),b=el("div","bubble");b.appendChild(el("p",null,text));w.appendChild(b);$("messages").appendChild(w);$("messages").scrollTop=1e9;return w}
