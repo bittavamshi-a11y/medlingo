@@ -66,16 +66,44 @@ document.getElementById("themeToggle").onclick=()=>{document.body.classList.togg
 
 // voice output: voices for the ANSWER language (accent = choose a voice)
 M.voices=(c=M.outLang)=>("speechSynthesis" in window)?speechSynthesis.getVoices().filter(v=>v.lang.toLowerCase().startsWith(c)):[];
-// cb = {onStart, onBoundary(charIndex), onEnd}
-M.speak=(text,cb={})=>{if(!("speechSynthesis" in window))return alert("Voice output is not supported in this browser.");
-  speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);u.lang=M.infoOf(M.outLang)[2];
-  const v=speechSynthesis.getVoices().find(v=>v.name===localStorage.voice&&v.lang.toLowerCase().startsWith(M.outLang))||M.voices()[0];
-  if(v)u.voice=v;u.rate=parseFloat(localStorage.rate||1);
-  u.onstart=()=>cb.onStart&&cb.onStart();
-  u.onboundary=e=>cb.onBoundary&&cb.onBoundary(e.charIndex);
-  u.onend=u.onerror=()=>cb.onEnd&&cb.onEnd();
-  speechSynthesis.speak(u)};
-M.stop=()=>{if("speechSynthesis" in window)speechSynthesis.cancel()};
+let medlingoAudio=null,medlingoSpeechToken=0;
+// Prefer server-generated audio so every offered language has the same playback path;
+// use a matching device voice only if the speech endpoint is unavailable.
+M.speak=async(text,cb={})=>{
+  const token=++medlingoSpeechToken;
+  if("speechSynthesis" in window)speechSynthesis.cancel();
+  if(medlingoAudio){medlingoAudio.pause();medlingoAudio.src="";medlingoAudio=null}
+  try{
+    const response=await fetch("/api/tts",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text,lang:M.outLang})});
+    if(!response.ok)throw new Error("TTS endpoint returned "+response.status);
+    const blob=await response.blob();
+    if(token!==medlingoSpeechToken)return;
+    const audio=new Audio(URL.createObjectURL(blob));medlingoAudio=audio;
+    audio.playbackRate=parseFloat(localStorage.rate||1);
+    audio.onplay=()=>cb.onStart&&cb.onStart();
+    audio.onended=()=>{URL.revokeObjectURL(audio.src);if(medlingoAudio===audio)medlingoAudio=null;cb.onEnd&&cb.onEnd()};
+    audio.onerror=()=>{URL.revokeObjectURL(audio.src);if(medlingoAudio===audio)medlingoAudio=null;fallbackSpeech(text,cb,token)};
+    await audio.play();
+    return;
+  }catch(e){
+    if(token!==medlingoSpeechToken)return;
+    console.warn("Server speech unavailable; trying device voice:",e.message);
+    fallbackSpeech(text,cb,token);
+  }
+};
+function fallbackSpeech(text,cb,token){
+  if(token!==medlingoSpeechToken)return;
+  if(!("speechSynthesis" in window)){alert("Audio is temporarily unavailable. Please try again.");cb.onEnd&&cb.onEnd();return}
+  const locale=M.infoOf(M.outLang)[2],base=M.outLang.toLowerCase();
+  const voices=speechSynthesis.getVoices();
+  const v=voices.find(x=>x.name===localStorage.voice&&x.lang.toLowerCase().startsWith(base))
+    ||voices.find(x=>x.lang.toLowerCase().startsWith(base));
+  if(!v){alert("No audio voice is installed for "+M.infoOf(M.outLang)[1]+". Please try again when the speech service is available.");cb.onEnd&&cb.onEnd();return}
+  const u=new SpeechSynthesisUtterance(text);u.lang=locale;u.voice=v;u.rate=parseFloat(localStorage.rate||1);
+  u.onstart=()=>cb.onStart&&cb.onStart();u.onboundary=e=>cb.onBoundary&&cb.onBoundary(e.charIndex);
+  u.onend=u.onerror=()=>cb.onEnd&&cb.onEnd();speechSynthesis.speak(u);
+}
+M.stop=()=>{medlingoSpeechToken++;if("speechSynthesis" in window)speechSynthesis.cancel();if(medlingoAudio){medlingoAudio.pause();medlingoAudio.src="";medlingoAudio=null}};
 
 // voice input: recognises in the INPUT language (UI language when input is "auto")
 M.listen=(onText,onEnd)=>{const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
