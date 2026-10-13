@@ -5,7 +5,7 @@ const PORT = process.env.PORT || 3000;
 
 // Keys come from Render > Environment (never hard-code them)
 const GROQ_KEY = process.env.GROQ_API_KEY;
-const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile"; // EDIT HERE: see console.groq.com/docs/models
+const GROQ_MODEL = process.env.GROQ_MODEL || "openai/gpt-oss-120b"; // Current Groq production model; older Llama model was retired for developer-tier accounts.
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-5-5";    // EDIT HERE
 
