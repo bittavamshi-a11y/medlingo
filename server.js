@@ -16,6 +16,62 @@ const CLAUDE_MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-5-5";    // EDIT
 app.use(express.json({ limit: "20kb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
+// Multilingual speech endpoint. Audio is generated server-side so playback does not
+// depend on which language voices happen to be installed on the visitor's device.
+const TTS_CODES = {
+  en: "en", hi: "hi", te: "te", ta: "ta", kn: "kn", ml: "ml", bn: "bn",
+  mr: "mr", gu: "gu", pa: "pa", ur: "ur", es: "es", fr: "fr", ar: "ar", zh: "zh-CN"
+};
+app.post("/api/tts", async (req, res) => {
+  const text = String(req.body?.text || "").trim();
+  const lang = String(req.body?.lang || "en").toLowerCase();
+  const code = TTS_CODES[lang];
+  if (!text) return res.status(400).json({ error: "Text is required." });
+  if (text.length > 3500) return res.status(413).json({ error: "Speech text is too long." });
+  if (!code) return res.status(400).json({ error: "Unsupported speech language." });
+
+  // Split at sentence boundaries and keep requests short for the speech endpoint.
+  const sentences = text.match(/[^.!?。！？]+[.!?。！？]*/g) || [text];
+  const chunks = [];
+  let current = "";
+  for (const sentence of sentences) {
+    const part = sentence.trim();
+    if (!part) continue;
+    if ((current + " " + part).trim().length <= 180) current = (current + " " + part).trim();
+    else {
+      if (current) chunks.push(current);
+      for (let i = 0; i < part.length; i += 180) chunks.push(part.slice(i, i + 180));
+      current = "";
+    }
+  }
+  if (current) chunks.push(current);
+  try {
+    const audioParts = [];
+    for (const chunk of chunks) {
+      const url = new URL("https://translate.google.com/translate_tts");
+      url.searchParams.set("ie", "UTF-8");
+      url.searchParams.set("client", "tw-ob");
+      url.searchParams.set("tl", code);
+      url.searchParams.set("q", chunk);
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(15000),
+        headers: { "user-agent": "Mozilla/5.0 MEDLINGO speech" }
+      });
+      if (!response.ok) throw new Error("Speech provider returned " + response.status);
+      audioParts.push(Buffer.from(await response.arrayBuffer()));
+    }
+    if (!audioParts.length) throw new Error("No speech audio returned");
+    res.set("Content-Type", "audio/mpeg");
+    res.set("Cache-Control", "no-store");
+    res.send(Buffer.concat(audioParts));
+  } catch (e) {
+    console.error("Multilingual TTS failed:", e.message);
+    res.status(502).json({ error: "Speech generation is temporarily unavailable." });
+  }
+});
+
+
+
 // Keys used to match doctors in public/doctors-data.js (must match SPECIALTIES there)
 const KEYS = ["general","dentist","cardiologist","pulmonologist","ent","neurologist","dermatologist","gastro","orthopedic","ophthalmologist","gynecologist","pediatrician","psychiatrist","endocrinologist","emergency"];
 
