@@ -84,34 +84,91 @@ M.listen=(onText,onEnd)=>{const SR=window.SpeechRecognition||window.webkitSpeech
   r.onresult=e=>onText(e.results[0][0].transcript);r.onend=onEnd;r.onerror=onEnd;r.start();return r};
 
 
-// Translate page text, including content inserted after initial page load.
+// Translate visible page copy, dynamically inserted content, and common accessibility attributes.
 (function translatePageCopy(){
  if(M.lang==="en"||!document.body)return;
  const excluded="script,style,noscript,textarea,input,select,option,svg,#hdr,[contenteditable=true],.user,.disclaimer";
- const seen=new WeakSet();let queued=new Set(),timer=null,busy=false;
- const key="medlingo-page-copy-v2-"+M.lang;let cache={};try{cache=JSON.parse(localStorage.getItem(key)||"{}")}catch{}
- function queueNode(n){
-  if(!n||seen.has(n)||!n.parentElement||n.parentElement.closest(excluded)||!n.nodeValue.trim()||n.nodeValue.trim().length<2)return;
-  seen.add(n);const s=n.nodeValue.trim();
-  if(cache[s]){n.nodeValue=n.nodeValue.replace(s,cache[s]);return}
-  queued.add(n);if(timer)clearTimeout(timer);timer=setTimeout(flush,300);
+ const processed=new WeakMap();
+ let queue=[],timer=null,busy=false;
+ // Version bump deliberately clears old cache entries that may have stored untranslated English.
+ const key="medlingo-page-copy-v3-"+M.lang;
+ let cache={};try{cache=JSON.parse(localStorage.getItem(key)||"{}")}catch{}
+ const attrNames=["placeholder","title","aria-label","alt"];
+ function translateTarget(target){
+   if(target.kind==="text"){
+     if(!target.node.isConnected)return;
+     if(target.node.nodeValue!==target.original)return;
+     target.node.nodeValue=target.translated;
+     processed.set(target.node,target.translated);
+   } else {
+     if(!target.node.isConnected||target.node.getAttribute(target.attr)!==target.original)return;
+     target.node.setAttribute(target.attr,target.translated);
+   }
  }
- async function flush(){
-  if(busy||!queued.size)return;busy=true;const batch=[...queued].filter(n=>n.isConnected);queued.clear();
-  const texts=[...new Set(batch.map(n=>n.nodeValue.trim()))].slice(0,100),missing=texts.filter(s=>!cache[s]);
-  if(missing.length)try{
-   const r=await fetch("/api/translate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({texts:missing,target:M.infoOf(M.lang)[1]})});
-   if(r.ok){const d=await r.json();if(Array.isArray(d.translations))missing.forEach((s,i)=>{if(d.translations[i])cache[s]=d.translations[i]});try{localStorage.setItem(key,JSON.stringify(cache))}catch{}}
-  }catch(e){console.warn("Page translation unavailable",e)}
-  batch.forEach(n=>{if(!n.isConnected)return;const s=n.nodeValue.trim();if(cache[s])n.nodeValue=n.nodeValue.replace(s,cache[s])});
-  busy=false;if(queued.size)flush();
+ function add(node,kind,attr,value){
+   const original=String(value||"").trim();
+   if(original.length<2||original.length>700)return;
+   if(kind==="text"&&processed.get(node)===node.nodeValue)return;
+   const target={node,kind,attr,original,translated:""};
+   if(cache[original]){target.translated=cache[original];translateTarget(target);return}
+   queue.push(target);
+   if(timer)clearTimeout(timer);
+   timer=setTimeout(flush,180);
  }
  function scan(root){
-  if(root.nodeType===Node.TEXT_NODE){queueNode(root);return}
-  if(root.nodeType!==Node.ELEMENT_NODE||root.matches(excluded)||root.closest(excluded))return;
-  const w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);let n;while((n=w.nextNode()))queueNode(n);
+   if(!root)return;
+   if(root.nodeType===Node.TEXT_NODE){
+     if(root.parentElement&&!root.parentElement.closest(excluded))add(root,"text",null,root.nodeValue);
+     return;
+   }
+   if(root.nodeType!==Node.ELEMENT_NODE||root.matches(excluded)||root.closest(excluded))return;
+   const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);
+   let n;while((n=walker.nextNode()))if(n.parentElement&&!n.parentElement.closest(excluded))add(n,"text",null,n.nodeValue);
+   const elements=[root,...root.querySelectorAll("*")];
+   elements.forEach(el=>{
+     if(el.matches(excluded)||el.closest(excluded))return;
+     attrNames.forEach(attr=>{const v=el.getAttribute(attr);if(v)add(el,"attr",attr,v)});
+   });
+ }
+ async function flush(){
+   if(busy||!queue.length)return;
+   busy=true;
+   const targets=queue.splice(0,queue.length);
+   const unique=[...new Set(targets.map(t=>t.original))];
+   for(let offset=0;offset<unique.length;offset+=12){
+     const texts=unique.slice(offset,offset+12);
+     const missing=texts.filter(s=>!cache[s]);
+     if(missing.length){
+       try{
+         const r=await fetch("/api/translate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({texts:missing,target:M.infoOf(M.lang)[1]})});
+         if(!r.ok)throw new Error("Translation endpoint returned "+r.status);
+         const d=await r.json();
+         if(!Array.isArray(d.translations)||d.translations.length!==missing.length)throw new Error("Incomplete translation response");
+         missing.forEach((s,i)=>{
+           const translated=String(d.translations[i]||"").trim();
+           if(translated)cache[s]=translated;
+         });
+       }catch(e){console.warn("Page translation unavailable:",e.message)}
+     }
+   }
+   try{localStorage.setItem(key,JSON.stringify(cache))}catch{}
+   targets.forEach(t=>{
+     const translated=cache[t.original];
+     if(translated){
+       t.translated=translated;
+       if(t.kind==="text")processed.set(t.node,t.original);
+       translateTarget(t);
+     }
+   });
+   busy=false;
+   if(queue.length)flush();
  }
  scan(document.body);
- new MutationObserver(records=>records.forEach(rec=>{rec.addedNodes.forEach(scan);if(rec.type==="characterData"&&!seen.has(rec.target))queueNode(rec.target)}))
-  .observe(document.body,{childList:true,subtree:true,characterData:true});
+ new MutationObserver(records=>records.forEach(rec=>{
+   rec.addedNodes.forEach(scan);
+   if(rec.type==="characterData")scan(rec.target);
+   if(rec.type==="attributes"&&attrNames.includes(rec.attributeName)){
+     const el=rec.target;if(!el.matches(excluded)&&!el.closest(excluded))add(el,"attr",rec.attributeName,el.getAttribute(rec.attributeName));
+   }
+ })).observe(document.body,{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:attrNames});
 })();
