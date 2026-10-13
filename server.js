@@ -211,17 +211,24 @@ app.post("/api/symptoms", async (req, res) => {
     try { const ai = await fn(raw, inName, outName, rule); out = { ...ai, urgent: ai.urgent || rule.urgent }; source = name; break; }
     catch (e) { console.error(name + " failed:", e.message); }
   }
-  // Rule-based fallback is English by default; translate every displayed field before returning it.
-  if (source === "rules" && !/^english/i.test(outName)) {
-    const fields = ["category","specialist","message","steps","precautions","seeDoctor"];
+  // Always translate the final response on the server for non-English output.
+  // Do this for AI replies too: prompts alone cannot guarantee the requested language.
+  if (!/^english/i.test(outName)) {
+    const fields = ["category","specialist","message","steps","precautions","seeDoctor","translation"];
     const values = fields.flatMap(k => Array.isArray(out[k]) ? out[k] : [out[k] || ""]);
     const translated = await translateBatch(values, outName);
     if (translated) {
       let i = 0;
       for (const k of fields) {
-        if (Array.isArray(out[k])) out[k] = translated.slice(i, i + out[k].length), i += out[k].length;
-        else out[k] = translated[i++];
+        if (Array.isArray(out[k])) {
+          out[k] = translated.slice(i, i + out[k].length);
+          i += out[k].length;
+        } else {
+          out[k] = translated[i++] || out[k];
+        }
       }
+    } else {
+      console.error("Could not translate symptom response to", outName, "(check translation provider keys and logs)");
     }
   }
   res.json({ ...out, source, disclaimer: DISC });
