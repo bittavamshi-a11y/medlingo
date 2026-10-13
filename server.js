@@ -5,7 +5,11 @@ const PORT = process.env.PORT || 3000;
 
 // Keys come from Render > Environment (never hard-code them)
 const GROQ_KEY = process.env.GROQ_API_KEY;
-const GROQ_MODEL = process.env.GROQ_MODEL || "openai/gpt-oss-120b"; // Current Groq production model; older Llama model was retired for developer-tier accounts.
+const CONFIGURED_GROQ_MODEL = String(process.env.GROQ_MODEL || "").trim();
+const RETIRED_GROQ_MODELS = new Set(["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]);
+const GROQ_MODEL = CONFIGURED_GROQ_MODEL && !RETIRED_GROQ_MODELS.has(CONFIGURED_GROQ_MODEL)
+  ? CONFIGURED_GROQ_MODEL
+  : "openai/gpt-oss-120b"; // Current production fallback; ignore retired defaults from older Render settings.
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-5-5";    // EDIT HERE
 
