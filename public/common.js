@@ -91,7 +91,7 @@ M.listen=(onText,onEnd)=>{const SR=window.SpeechRecognition||window.webkitSpeech
  const processed=new WeakMap();
  let queue=[],timer=null,busy=false;
  // Version bump deliberately clears old cache entries that may have stored untranslated English.
- const key="medlingo-page-copy-v3-"+M.lang;
+ const key="medlingo-page-copy-v4-"+M.lang;
  let cache={};try{cache=JSON.parse(localStorage.getItem(key)||"{}")}catch{}
  const attrNames=["placeholder","title","aria-label","alt"];
  function translateTarget(target){
