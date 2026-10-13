@@ -87,11 +87,11 @@ M.listen=(onText,onEnd)=>{const SR=window.SpeechRecognition||window.webkitSpeech
 // Translate visible page copy, dynamically inserted content, and common accessibility attributes.
 (function translatePageCopy(){
  if(M.lang==="en"||!document.body)return;
- const excluded="script,style,noscript,textarea,input,select,option,svg,#hdr,[contenteditable=true],.user,.disclaimer";
+ const excluded="script,style,noscript,textarea,input,select,option,svg,#hdr,[contenteditable=true],.user";
  const processed=new WeakMap();
  let queue=[],timer=null,busy=false;
  // Version bump deliberately clears old cache entries that may have stored untranslated English.
- const key="medlingo-page-copy-v4-"+M.lang;
+ const key="medlingo-page-copy-v5-"+M.lang;
  let cache={};try{cache=JSON.parse(localStorage.getItem(key)||"{}")}catch{}
  const attrNames=["placeholder","title","aria-label","alt"];
  function translateTarget(target){
@@ -145,7 +145,7 @@ M.listen=(onText,onEnd)=>{const SR=window.SpeechRecognition||window.webkitSpeech
      const missing=texts.filter(s=>!cache[s]);
      if(missing.length){
        try{
-         const r=await fetch("/api/translate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({texts:missing,target:M.infoOf(M.lang)[1]})});
+         const r=await fetch("/api/translate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({texts:missing,target:M.lang})});
          if(!r.ok)throw new Error("Translation endpoint returned "+r.status);
          const d=await r.json();
          if(!Array.isArray(d.translations)||d.translations.length!==missing.length)throw new Error("Incomplete translation response");
