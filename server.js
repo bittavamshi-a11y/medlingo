@@ -123,46 +123,28 @@ async function askAnthropic(symptom, inName, outName, fallback) {
 }
 
 
-// Translate batches of interface text. Uses the same server-side provider keys as symptom guidance.
+// Translate interface text in small batches so large pages do not exceed model output limits.
 app.post("/api/translate", async (req, res) => {
-  const texts = Array.isArray(req.body?.texts) ? req.body.texts.slice(0, 120).map(x => String(x).slice(0, 500)) : [];
-  const target = String(req.body?.target || "English").slice(0, 40);
+  const texts = Array.isArray(req.body?.texts)
+    ? req.body.texts.slice(0, 120).map(x => String(x).slice(0, 500))
+    : [];
+  const target = cleanLanguageName(String(req.body?.target || "English").slice(0, 60));
   if (!texts.length) return res.status(400).json({ error: "No text supplied." });
-  if (texts.reduce((n, x) => n + x.length, 0) > 18000) return res.status(413).json({ error: "Translation batch is too large." });
-  const prompt = `Translate every string in the JSON array into ${target}. Return ONLY a valid JSON object with a "translations" array containing exactly one translation per input string in the same order. Preserve meaning, names, numbers, HTML-free plain text, and medical safety warnings. Do not add explanations. Input JSON: ${JSON.stringify(texts)}`;
+  if (texts.reduce((n, x) => n + x.length, 0) > 18000) {
+    return res.status(413).json({ error: "Translation batch is too large." });
+  }
+  if (/^english$/i.test(target)) return res.json({ translations: texts });
   try {
-    if (GROQ_KEY) {
-      const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-        method: "POST", signal: AbortSignal.timeout(20000),
-        headers: { "content-type": "application/json", authorization: "Bearer " + GROQ_KEY },
-        body: JSON.stringify({ model: GROQ_MODEL, temperature: 0.1, max_tokens: 5000, response_format: { type: "json_object" }, messages: [{ role: "system", content: "You are a precise multilingual UI translator. Return valid JSON only." }, { role: "user", content: prompt }] })
-      });
-      if (r.ok) {
-        const d = await r.json();
-        const raw = d.choices?.[0]?.message?.content || "{}";
-        const parsed = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1));
-        if (Array.isArray(parsed.translations) && parsed.translations.length === texts.length) return res.json({ translations: parsed.translations.map((x,i) => String(x || texts[i]).slice(0, 1000)) });
-      }
+    const translations = await translateBatch(texts, target);
+    if (!translations || translations.length !== texts.length) {
+      return res.status(503).json({ error: "Translation service temporarily unavailable." });
     }
-    if (ANTHROPIC_KEY) {
-      const r = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST", signal: AbortSignal.timeout(20000),
-        headers: { "content-type": "application/json", "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01" },
-        body: JSON.stringify({ model: CLAUDE_MODEL, max_tokens: 5000, system: "You are a precise multilingual UI translator. Return valid JSON only.", messages: [{ role: "user", content: prompt }] })
-      });
-      if (r.ok) {
-        const d = await r.json(), raw = d.content?.[0]?.text || "{}";
-        const parsed = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1));
-        if (Array.isArray(parsed.translations) && parsed.translations.length === texts.length) return res.json({ translations: parsed.translations.map((x,i) => String(x || texts[i]).slice(0, 1000)) });
-      }
-    }
-    return res.status(503).json({ error: "Translation provider is not configured." });
+    return res.json({ translations });
   } catch (e) {
-    console.error("Translation failed:", e.message);
+    console.error("Interface translation failed:", e.message);
     return res.status(502).json({ error: "Translation service temporarily unavailable." });
   }
 });
-
 
 app.get("/api/health", (_q, res) => res.json({
   status: "ok", app: "MEDLINGO", ai: !!(GROQ_KEY || ANTHROPIC_KEY),
@@ -170,29 +152,95 @@ app.get("/api/health", (_q, res) => res.json({
 }));
 
 
+function cleanLanguageName(value) {
+  // The browser sends labels like "తెలుగు (te)"; model prompts need the language name only.
+  const name = String(value || "English").replace(/\\s*\\([^)]*\\)\\s*$/, "").trim();
+  const aliases = {
+    हिन्दी: "Hindi", తెలుగు: "Telugu", தமிழ்: "Tamil", ಕನ್ನಡ: "Kannada",
+    മലയാളം: "Malayalam", বাংলা: "Bengali", मराठी: "Marathi", ગુજરાતી: "Gujarati",
+    ਪੰਜਾਬੀ: "Punjabi", اردو: "Urdu", Español: "Spanish", Français: "French",
+    العربية: "Arabic", 中文: "Chinese"
+  };
+  return aliases[name] || name || "English";
+}
+
 async function translateBatch(texts, target) {
-  const prompt = `Translate every string in the JSON array into ${target}. Return ONLY valid JSON with a "translations" array of the same length and order. Preserve medical meaning and safety warnings. Input: ${JSON.stringify(texts)}`;
-  if (GROQ_KEY) {
-    try {
-      const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-        method:"POST", signal:AbortSignal.timeout(20000),
-        headers:{"content-type":"application/json",authorization:"Bearer "+GROQ_KEY},
-        body:JSON.stringify({model:GROQ_MODEL,temperature:0.1,max_tokens:3000,response_format:{type:"json_object"},messages:[{role:"system",content:"You are a precise medical-language translator. Return JSON only."},{role:"user",content:prompt}]})
-      });
-      if(r.ok){const d=await r.json(),raw=d.choices?.[0]?.message?.content||"{}";const j=JSON.parse(raw.slice(raw.indexOf("{"),raw.lastIndexOf("}")+1));if(Array.isArray(j.translations)&&j.translations.length===texts.length)return j.translations.map((v,i)=>String(v||texts[i]));}
-    } catch(e){console.error("Groq translation failed:",e.message)}
+  const language = cleanLanguageName(target);
+  if (!Array.isArray(texts) || !texts.length) return [];
+  if (/^english$/i.test(language)) return texts.map(String);
+  // Smaller chunks avoid truncated JSON when a page has many text nodes.
+  const output = [];
+  for (let offset = 0; offset < texts.length; offset += 12) {
+    const chunk = texts.slice(offset, offset + 12).map(x => String(x));
+    const prompt = `Translate every string in the JSON array into ${language}. Return ONLY valid JSON with a "translations" array containing exactly ${chunk.length} strings in the same order. Keep each translation faithful, natural, and concise. Preserve names, numbers, links, and medical safety warnings. Do not return the original English unless it is a proper name or has no suitable translation. Input JSON: ${JSON.stringify(chunk)}`;
+    let translated = null;
+
+    if (GROQ_KEY) {
+      try {
+        const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+          method: "POST", signal: AbortSignal.timeout(20000),
+          headers: { "content-type": "application/json", authorization: "Bearer " + GROQ_KEY },
+          body: JSON.stringify({
+            model: GROQ_MODEL, temperature: 0.1, max_tokens: 3000,
+            response_format: { type: "json_object" },
+            messages: [
+              { role: "system", content: "You are a precise multilingual translator. Return valid JSON only." },
+              { role: "user", content: prompt }
+            ]
+          })
+        });
+        if (r.ok) {
+          const d = await r.json();
+          const raw = d.choices?.[0]?.message?.content || "";
+          const j = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1));
+          if (Array.isArray(j.translations) && j.translations.length === chunk.length &&
+              j.translations.every(v => typeof v === "string" && v.trim())) {
+            translated = j.translations.map(v => v.trim());
+          } else {
+            throw new Error("Groq returned an incomplete translation array");
+          }
+        } else {
+          const detail = await r.text().catch(() => "");
+          throw new Error("Groq status " + r.status + (detail ? ": " + detail.slice(0, 180) : ""));
+        }
+      } catch (e) {
+        console.error("Groq translation failed:", e.message);
+      }
+    }
+
+    if (!translated && ANTHROPIC_KEY) {
+      try {
+        const r = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST", signal: AbortSignal.timeout(20000),
+          headers: { "content-type": "application/json", "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01" },
+          body: JSON.stringify({
+            model: CLAUDE_MODEL, max_tokens: 3000,
+            system: "You are a precise multilingual translator. Return valid JSON only.",
+            messages: [{ role: "user", content: prompt }]
+          })
+        });
+        if (r.ok) {
+          const d = await r.json(), raw = d.content?.[0]?.text || "";
+          const j = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1));
+          if (Array.isArray(j.translations) && j.translations.length === chunk.length &&
+              j.translations.every(v => typeof v === "string" && v.trim())) {
+            translated = j.translations.map(v => v.trim());
+          } else {
+            throw new Error("Anthropic returned an incomplete translation array");
+          }
+        } else {
+          const detail = await r.text().catch(() => "");
+          throw new Error("Anthropic status " + r.status + (detail ? ": " + detail.slice(0, 180) : ""));
+        }
+      } catch (e) {
+        console.error("Anthropic translation failed:", e.message);
+      }
+    }
+
+    if (!translated) return null;
+    output.push(...translated);
   }
-  if (ANTHROPIC_KEY) {
-    try {
-      const r = await fetch("https://api.anthropic.com/v1/messages", {
-        method:"POST",signal:AbortSignal.timeout(20000),
-        headers:{"content-type":"application/json","x-api-key":ANTHROPIC_KEY,"anthropic-version":"2023-06-01"},
-        body:JSON.stringify({model:CLAUDE_MODEL,max_tokens:3000,system:"You are a precise medical-language translator. Return JSON only.",messages:[{role:"user",content:prompt}]})
-      });
-      if(r.ok){const d=await r.json(),raw=d.content?.[0]?.text||"{}";const j=JSON.parse(raw.slice(raw.indexOf("{"),raw.lastIndexOf("}")+1));if(Array.isArray(j.translations)&&j.translations.length===texts.length)return j.translations.map((v,i)=>String(v||texts[i]));}
-    } catch(e){console.error("Anthropic translation failed:",e.message)}
-  }
-  return null;
+  return output;
 }
 
 // Safe diagnostic: confirms whether the configured provider can translate without exposing API keys.
@@ -227,7 +275,7 @@ app.post("/api/symptoms", async (req, res) => {
   if (!/^english/i.test(outName)) {
     const fields = ["category","specialist","message","steps","precautions","seeDoctor","translation"];
     const values = fields.flatMap(k => Array.isArray(out[k]) ? out[k] : [out[k] || ""]);
-    const translated = await translateBatch(values, outName);
+    const translated = await translateBatch(values, cleanLanguageName(outName));
     if (translated) {
       let i = 0;
       for (const k of fields) {
